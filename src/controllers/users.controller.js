@@ -127,9 +127,10 @@ const logoutUser = asyncHandler(
           // new:true in used to return the updated user(by default it returns old)
           await User.findByIdAndUpdate(req.user._id,{$unset:{refreshToken:1}},{new:true});
 
-          res.status(200).clearCookies("accessToken",options).clearCookies("refreshToken",options).json(new ApiResponse(200,{},"User log out successfull!!"))
+          return res.status(200).clearCookies("accessToken",options).clearCookies("refreshToken",options).json(new ApiResponse(200,{},"User log out successfull!!"))
      }
 )
+
 const refreshAccessToken = asyncHandler(async(req,res)=>{
     const refreshToken =req.cookies?.refreshToken;
     if(!refreshToken){
@@ -154,5 +155,66 @@ const refreshAccessToken = asyncHandler(async(req,res)=>{
     .cookie("accessToken",accessToken,options)
     .json(new ApiResponse(200,{refreshToken,accessToken,user},"access token refresh successfull!!  "));
 })
+
+const changePassword = asyncHandler(async(req,res)=>{
+    const {oldPassword,newPassword} = req.body;
+    
+    if(oldPassword === newPassword){
+        throw new ApiError(401,"Old and new password are same");
+    }
+    const user = await User.findById(req.user._id);
+    const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
+    if(!isPasswordCorrect){
+        throw new ApiError(401,"Invalid Old password");
+    }
+    user.password = newPassword;
+    await user.save({validateBeforeSave:false});
+    return res
+    .status(200)
+    .json(new ApiResponse(200,{user},"Password updated successfully"))
+
+})
+
+const updatedAvatar = asyncHandler(async(req,res)=>{
+    const avatarLocalPath = req.file.path;
+    if(!avatarLocalPath){
+        throw new ApiError(401,"Avatar is not uploaded");
+    }
+    const response = await cloudinary_upload(avatarLocalPath);
+    
+    const user = User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set:{
+                avatar:response.url
+            }
+        },
+        {new :true}
+    );
+    return res
+    .status(200)
+    .json(new ApiResponse(200,user,"Avatar is uploaded successfully"));
+});
+
+const updatedCoverImage = asyncHandler(async(req,res)=>{
+    const coverImageLocalPath = req.file.path;
+    if(!coverImageLocalPath){
+        throw new ApiError(401,"Cover Image  is not uploaded");
+    }
+    const response = await cloudinary_upload(coverImageLocalPath);
+    
+    const user = User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set:{
+                coverImage:response.url
+            }
+        },
+        {new :true}
+    );
+    return res
+    .status(200)
+    .json(new ApiResponse(200,user,"Cover Image is uploaded successfully"));
+});
 //  const result = await userRegister();
 export {userRegister,loginUser,logoutUser,refreshAccessToken};
