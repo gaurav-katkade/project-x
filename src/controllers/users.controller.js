@@ -65,14 +65,15 @@ const userRegister = asyncHandler(
 
 const generateAccessTokenAndRefreshToken=async (userid)=>{
      try {
-         const user = User.findById(userid);
+          // cause of error here await was missing
+         const user = await User.findById(userid);
           const accessToken =  await user.generateAccessToken();
           const refreshToken = await user.generateRefreshToken();
           user.refreshToken = refreshToken;
           user.save({validateBeforeSave:false})
         return {accessToken,refreshToken};
      } catch (error) {
-          throw new ApiError(500,"something went wrong while genrating accessToken or refreshToken");
+          throw new ApiError(500,`something went wrong while genrating accessToken or refreshToken ${error.message}`);
      }
 }
 
@@ -83,31 +84,37 @@ const loginUser = asyncHandler(
           //check the validation of password
           //refresh token and access token genearation
           const {username,email,password} = req.body;
+          console.log("🚀 ~ username,email,password:", username,email,password)
+          console.log("🚀 ~ loginUser - req.body:", req.body)
 
-          if(!username || !email){
-               throw ApiError(401,"User not provided username or email");
+          if(!username && !email){
+               throw new ApiError(401,"User not provided username or email");
           }
 
           const user = await User.findOne({$or:[{username},{email}]});
 
           if(!user){
-               throw ApiError(401,"User does not exist");
+               throw new ApiError(401,"User does not exist");
           }
 
-          if(!user.isPasswordCorrect(user.password)){
-               throw ApiError(401,"Password is not correct");
+          if(!await user.isPasswordCorrect(password)){
+               throw new ApiError(401,"Password is not correct");
           }
           
           //geneate token 
-          const {accessToken,refreshToken} = generateAccessTokenAndRefreshToken(user._id);
+          const {accessToken,refreshToken} = await generateAccessTokenAndRefreshToken(user._id);
           const options = {
                httpOnly:true,
                secure:true
           }
+          // mistake : forgot for await
+          const loggedInUser = await User.findById(user._id).select("-password -refreshToken");
 
-          const loggedInUser = User.findById(user._id).select("-password -refreshToken");
-
-          return res.status(200).cookie("accessToken",accessToken,options).cookie("refreshToken",refreshToken,options).json(
+          return res
+          .status(200)
+          .cookie("accessToken",accessToken,options)
+          .cookie("refreshToken",refreshToken,options)
+          .json(
                new ApiResponse
                (200,
                {
@@ -121,31 +128,38 @@ const loginUser = asyncHandler(
 )
 
 const logoutUser = asyncHandler(
-     async(req,res,next)=>{
+     async(req,res)=>{
 
           // const {user} = req.body;
           //to remove refreshtoken 
           // new:true in used to return the updated user(by default it returns old)
           await User.findByIdAndUpdate(req.user._id,{$unset:{refreshToken:1}},{new:true});
-
-          return res.status(200).clearCookies("accessToken",options).clearCookies("refreshToken",options).json(new ApiResponse(200,{},"User log out successfull!!"))
+          const options = {
+               secure:true,
+               httpOnly:true
+          }
+          //mistake : its clearCookie not clearCookies
+          return res.status(200).clearCookie("accessToken",options).clearCookie("refreshToken",options).json(new ApiResponse(200,{},"User log out successfull!!"))
      }
 )
 
 const refreshAccessToken = asyncHandler(async(req,res)=>{
-    const refreshToken =req.cookies?.refreshToken;
+    const refreshToken =req.cookies?.refreshToken || req.body.refreshToken;
     if(!refreshToken){
         throw new ApiError(401,"Refresh token does not exits");
     }
     const decodedRefreshToken = jwt.verify(refreshToken,process.env.REFRESH_TOKEN_KEY)
+    console.log("🚀 ~ refreshAccessToken ~ decodedRefreshToken:", decodedRefreshToken)
     const user = await User.findById(decodedRefreshToken?._id);
     if(!user){
         throw new ApiError(401,"Invalid refresh token for user")
     }
-    if(refreshToken !== user.refreshToken){
+    if(refreshToken !== user?.refreshToken){
         throw new ApiError(401,"Refresh token does not match");
     }
-    const {accessToken,newRefreshToken} = generateAccessTokenAndRefreshToken(user._id);
+    // mistake await was missing
+    const {accessToken,newRefreshToken} = await generateAccessTokenAndRefreshToken(user._id);
+    console.log("🚀 ~ refreshAccessToken ~ accessToken,newRefreshToken:", accessToken,newRefreshToken)
     const options={
         httpOnly:true,
         secure:true
@@ -183,7 +197,7 @@ const updatedAvatar = asyncHandler(async(req,res)=>{
     }
     const response = await cloudinary_upload(avatarLocalPath);
     
-    const user = User.findByIdAndUpdate(
+    const user = await User.findByIdAndUpdate(
         req.user._id,
         {
             $set:{
@@ -204,7 +218,7 @@ const updatedCoverImage = asyncHandler(async(req,res)=>{
     }
     const response = await cloudinary_upload(coverImageLocalPath);
     
-    const user = User.findByIdAndUpdate(
+    const user = await User.findByIdAndUpdate(
         req.user._id,
         {
             $set:{
@@ -250,10 +264,10 @@ const getChannelProfile = asyncHandler(async(req,res)=>{
           {
                $addFields:{
                     subscriberCount:{
-                         size:"$subscibers"
+                         $size:"$subscibers"
                     },
                     channelSubscribedToCount:{
-                         size:"subscribedTo"
+                         $size:"$subscribedTo"
                     },
                     isSubscribed:{
                          $cond:{
